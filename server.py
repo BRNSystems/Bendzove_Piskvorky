@@ -4,7 +4,7 @@ import random
 import websockets
 import threading
 
-width = 9
+width = 10
 height = 6
 player_on_turn = 0
 
@@ -27,71 +27,105 @@ async def hello(ws, _):
     global width
     global height
     global player_on_turn
-    i = 0
+    exitit = 0
     connected.add(ws)
     this_id = random.randint(0, 100000)
+    i = 0
     players.append({"ws": ws, "id": this_id})
     if len(players) >= 3:
-        await socket_broadcast(json.dumps({"action": "info", "data": f"Warning {len(players)} players are connected"}))
+        await socket_broadcast(json.dumps({"action": "print", "data": f"Warning {len(players)} players are connected"}))
     await ws.send(json.dumps({"action": "id", "id": this_id}))
     try:
-        while i == 0:
+        await ws.send(await draw(grid, True))
+        for player in players:
+            if player["ws"] == ws:
+                await ws.send(json.dumps({"action": "print", "data": f"It is your turn, type 'add (number of column from 0 to {width - 1})' :"}))
+            else:
+                ws.send(json.dumps({"action": "print", "data": f"It is player{player_on_turn} 's turn."}))
+
+        await ws.send(json.dumps({"action": "print", "data": "Enter command:"}))
+        while exitit == 0:
             try:
                 x = await ws.recv()
                 try:
-                    temp = json.loads(x)
-                    print(str(temp) + " data")
-                    if temp["action"] == "reset":
+                    temp2 = json.loads(x)
+                    print(str(temp2))
+                    cmd_args = str(temp2["action"]).split(" ")
+                    temp = {"action": cmd_args[0], "args": [], "id": temp2["id"]}
+                    i = 0
+                    for cmd_arg in cmd_args:
+                        if i != 0:
+                            temp["args"].append(cmd_arg)
+                        i = i + 1
+                    print(str(temp))
+
+                    if str(temp["action"]) == "reset":
                         await reset()
                         await draw(grid)
                         await socket_broadcast(
-                            json.dumps({"action": "info", "data": f"It is player{player_on_turn} 's turn."}))
+                            json.dumps({"action": "print", "data": f"It is player{player_on_turn} 's turn."}))
                         await players[player_on_turn]['ws'].send(json.dumps(
-                            {"action": "info", "data": f"It is your turn, input column number from 0 to {width - 1}:"}))
-                    elif temp["action"] == "redraw":
-                        await ws.send(await draw(grid, True))
-                    elif temp["action"] == "resize":
-                        try:
-                            width = int(temp["width"])
-                            height = int(temp["height"])
-                            await reset()
-                            await ws.send(await draw(grid, True))
-                            await socket_broadcast(
-                                json.dumps({"action": "info", "data": f"It is player{player_on_turn} 's turn."}))
-                            await players[player_on_turn]['ws'].send(json.dumps({"action": "info",
-                                                                                 "data": f"It is your turn, type 'add (number of column from 0 to {width - 1}' :"}))
-                        except ValueError:
-                            await ws.send(json.dumps({"action": "info", "data": "Invalid arguments to resize."}))
-                    elif temp["action"] == "add":
-                        plx = 0
-                        for player in players:
-                            if temp["id"] == player["id"]:
-                                if plx == player_on_turn:
-                                    res = await add(grid, temp["col"])
-                                    if res == 1:
-                                        await apply_gravity(grid)
-                                        await socket_broadcast(await draw(grid, True))
-                                        await socket_broadcast(json.dumps(
-                                            {"action": "info", "data": f"It is player{player_on_turn} 's turn."}))
-                                        await players[player_on_turn]['ws'].send(json.dumps({"action": "info",
-                                                                                             "data": f"It is your turn, input column number from 0 to {width - 1}:"}))
-                                    elif res == 2:
-                                        await players[player_on_turn]['ws'].send(json.dumps({"action": "info",
-                                                                                             "data": f"Oops you have entered '{temp['col']}' which is not a valid input. Please try again player{player_on_turn}:"}))
-                                    elif res == 0:
-                                        await players[player_on_turn]['ws'].send(json.dumps({"action": "info",
-                                                                                             "data": f"Oops you have entered '{temp['col']}' which is full. Please try again player{player_on_turn}:"}))
-                            plx = plx + 1
-                    elif temp["action"] == "help":
-                        await ws.send(json.dumps({"action": "info",
-                                                  "data": f"\n'reset' - Resets the game, also you must start the game with this\n'redraw' - Sends you the current state of th board\n'resize' - Resizes the playing board and resets it usage: 'resize (width) (height)'\n'add' - Adds your character to a column, usage: 'add (column number from 0 to {width - 1})\n'help' - Prints this help message"}))
+                            {"action": "print",
+                             "data": f"It is your turn, input column number from 0 to {width - 1}:"}))
 
+                    elif str(temp["action"]) == "redraw":
+                        await ws.send(await draw(grid, True))
+
+                    elif str(temp["action"]) == "resize":
+                        try:
+                            if len(temp["args"]) >= 2:
+                                width = int(temp["args"][0])
+                                height = int(temp["args"][1])
+                                await reset()
+                                await ws.send(await draw(grid, True))
+                                await socket_broadcast(
+                                    json.dumps({"action": "print", "data": f"It is player{player_on_turn} 's turn."}))
+                                await players[player_on_turn]['ws'].send(json.dumps({"action": "print",
+                                                                                     "data": f"It is your turn, type 'add (number of column from 0 to {width - 1})' :"}))
+                        except ValueError:
+                            await ws.send(json.dumps({"action": "print", "data": "Invalid arguments to resize."}))
+
+                    elif str(temp["action"]) == "add":
+                        if len(temp["args"]) >= 1:
+                            plx = 0
+                            for player in players:
+                                if int(temp["id"]) == int(player["id"]):
+                                    if plx == player_on_turn:
+                                        res = await add(grid, temp["args"][0])
+                                        if res == 1:
+                                            await apply_gravity(grid)
+                                            await socket_broadcast(await draw(grid, True))
+                                            await socket_broadcast(json.dumps(
+                                                {"action": "print", "data": f"It is player{player_on_turn} 's turn."}))
+                                            await players[player_on_turn]['ws'].send(json.dumps({"action": "print",
+                                                                                                 "data": f"It is your turn, input 'add (0 to {width - 1})':"}))
+                                        elif res == 2:
+                                            await players[player_on_turn]['ws'].send(json.dumps({"action": "print",
+                                                                                                 "data": f"Oops you have entered '{temp['col']}' which is not a valid input. Please try again player{player_on_turn}:"}))
+                                        elif res == 0:
+                                            await players[player_on_turn]['ws'].send(json.dumps({"action": "print",
+                                                                                                 "data": f"Oops you have entered '{temp['col']}' which is full. Please try again player{player_on_turn}:"}))
+                                plx = plx + 1
+
+                    elif str(temp["action"]) == "version":
+                        await ws.send(json.dumps(
+                            {"action": "print",
+                             "data": "Bendžove Piškvorky\n'Jeminé, Bruno nemáš tam algorytmus' edition"}))
+
+                    elif str(temp["action"]) == "help":
+                        await ws.send(json.dumps({"action": "print",
+                                                  "data": f"\n'reset' - Resets the game\n'redraw' - Sends you the current state of the board\n'resize' - Resizes the playing board and resets it usage: 'resize (width) (height)'\n'add' - Adds your character to a column, usage: 'add (column number from 0 to {width - 1})\n'version' - Prints version of the server\n'help' - Prints this help message"}))
+
+                    else:
+                        await ws.send(json.dumps(
+                            {"action": "print", "data": "Unknown command. Type 'help' to list all commands."}))
+                    await ws.send(json.dumps({"action": "print", "data": "Enter command:"}))
                 except Exception as e:
                     print(e)
             except Exception as e:
                 print(e)
                 connected.remove(ws)
-                i = 1
+                exitit = 1
     finally:
         # Unregister.
         try:
@@ -155,30 +189,39 @@ async def add(gridx, col3):
 
 
 async def draw(gridx, return_data=False):
-    temporary_storage = ""
-    for _ in range((width * 2) + 1):
-        temporary_storage = temporary_storage + "_"
-    temporary_storage = temporary_storage + "\n|"
+    tmp = ""
+    for i in range((width * 4) - 7):
+        tmp = tmp + "‗"
+    tmp = tmp + "\n/"
+    for i in range((width * 2) - 1):
+        tmp = tmp + " "
+    tmp = tmp + "\\"
+    tmp = tmp + "\n│"
     for i in range(0, width):
-        temporary_storage = temporary_storage + f"{i}|"
-    temporary_storage = temporary_storage + "\n|"
+        tmp = tmp + f"{i}│"
+    tmp = tmp + "\n│"
     for y in range(0, height):
         for x in range(0, width):
-            temporary_storage = temporary_storage + gridx[x][y] + "|"
-        temporary_storage = temporary_storage + "\n|"
-    temporary_storage = temporary_storage[:-1]
-    for _ in range((width * 2) + 1):
-        temporary_storage = temporary_storage + "¯"
-    print(temporary_storage)
+            tmp = tmp + gridx[x][y] + "│"
+        tmp = tmp + "\n│"
+    tmp = tmp[:-1]
+    tmp = tmp + "\\"
+    for i in range((width * 2) - 1):
+        tmp = tmp + " "
+    tmp = tmp + "/\n"
+    for i in range((width * 2) + 1):
+        tmp = tmp + "‾"
+    print(tmp)
     if return_data:
-        return json.dumps({"action": "redraw", "data": temporary_storage})
+        return json.dumps({"action": "print", "data": tmp})
     else:
-        await socket_broadcast(json.dumps({"action": "redraw", "data": temporary_storage}))
+        await socket_broadcast(json.dumps({"action": "print", "data": tmp}))
 
 
 start_server = websockets.serve(hello, "localhost", 8765)
 
 loop = asyncio.get_event_loop()
+loop.run_until_complete(reset())
 
 
 def loop_in_thread():
